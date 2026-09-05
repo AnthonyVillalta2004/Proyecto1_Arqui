@@ -1,0 +1,33 @@
+# Compilación de C y Ensamblador
+*.o
+*.out
+programa
+main
+
+# Archivos de datos del proyecto (Entrada y Salida)
+*.dat
+input.dat
+output_scalar.dat
+output_vector.dat
+
+# Archivos generados por perf (análisis de rendimiento)
+perf.data
+perf.data.old
+
+# Python (Scripts de generación y validación)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+
+# Entornos de desarrollo y editores
+.vscode/
+*.swp
+*~
+*.bak
+
+# Sistema Operativo
+.directory
+.DS_Store
