@@ -68,48 +68,151 @@ sum_array:
 ;                     float *mean, float *var, float *min, float *max)
 ;   rdi = arr, esi = n, rdx = mean*, rcx = var*, r8 = min*, r9 = max*
 ;
-; TODO (estudiante):
-;   1) mean = suma(arr) / n (puede llamar a sum_array; recuerde
-;      guardar arr/n/mean*/var*/min*/max* en registros callee-saved
-;      antes, porque la llamada destruye registros caller-saved).
-;   2) Segunda pasada VECTORIZADA para acumular sum((x-mean)^2):
-;        - "broadcast" de mean a los 8 carriles con vbroadcastss.
-;        - vsubps + vmulps (o vfmadd231ps si quieren ir mas alla)
-;          para acumular los cuadrados de las diferencias,
-;        - misma reduccion horizontal que en sum_array,
-;        - bucle escalar para el remanente (subss/mulss/addss).
-;   3) Min/max VECTORIZADOS con vminps/vmaxps a lo largo del bucle
-;      principal, reduccion final con vextractf128 + vminps/vmaxps
-;      (y shuffles si quieren reducir los 4 restantes a 1), mas
-;      bucle escalar de cierre con minss/maxss o comiss.
-;   4) Guarde los resultados en [rdx]=mean, [rcx]=var, [r8]=min,
-;      [r9]=max. Si n == 0, escriba 0.0 en los cuatro.
-;   5) 'vzeroupper' antes de cualquier 'ret' en una funcion que usa
-;      registros YMM.
+;   var = varianza POBLACIONAL = sum((x - mean)^2) / n
+;   Caso borde: si n <= 0, escriba 0.0 en mean/var/min/max.
 ; ---------------------------------------------------------------
 compute_stats:
+    ; 1. Preservar registros callee-saved segun la ABI System V
     push    rbx
     push    r12
     push    r13
     push    r14
     push    r15
+    push    r9                     ; Guardar puntero max* en pila
 
-    ; TODO: implementar el algoritmo descrito arriba.
+    ; 2. Caso borde: si n <= 0, escribir 0.0 en las salidas
+    test    esi, esi
+    jle     .stats_vec_zero
 
-    ; --- placeholder temporal: elimine estas lineas al implementar ---
+    ; 3. Guardar argumentos en registros preservados
+    mov     rbx, rdi               ; rbx = arr
+    mov     r12d, esi              ; r12d = n
+    mov     r13, rdx               ; r13 = mean*
+    mov     r14, rcx               ; r14 = var*
+    mov     r15, r8                ; r15 = min*
+
+    ; 4. Calcular limite vectorial N_vec = n & ~7 (multiplo de 8)
+    mov     ecx, esi
+    and     ecx, ~7                ; ecx = limite del bucle AVX2
+
+    ; 5. Inicializar acumuladores vectoriales
+    xor     eax, eax               ; eax = i = 0
+    vxorps  ymm0, ymm0, ymm0       ; ymm0 = acumulador suma = [0, ..., 0]
+    vbroadcastss ymm2, [rbx]       ; ymm2 = acumulador min = [arr[0], ..., arr[0]]
+    vbroadcastss ymm3, [rbx]       ; ymm3 = acumulador max = [arr[0], ..., arr[0]]
+
+    test    ecx, ecx
+    jle     .pass1_vec_reduce
+
+.pass1_vec_loop:
+    cmp     eax, ecx
+    jge     .pass1_vec_reduce
+    vmovaps ymm1, [rbx + rax*4]    ; Carga 8 floats alineados a 32 bytes
+    vaddps  ymm0, ymm0, ymm1       ; Suma vectorial
+    vminps  ymm2, ymm2, ymm1       ; Minimo vectorial
+    vmaxps  ymm3, ymm3, ymm1       ; Maximo vectorial
+    add     eax, 8
+    jmp     .pass1_vec_loop
+
+.pass1_vec_reduce:
+    ; --- Reduccion horizontal de suma (ymm0 -> xmm0) ---
+    vextractf128 xmm6, ymm0, 1
+    vaddps  xmm0, xmm0, xmm6
+    vhaddps xmm0, xmm0, xmm0
+    vhaddps xmm0, xmm0, xmm0
+
+    ; --- Reduccion horizontal de minimo (ymm2 -> xmm2) ---
+    vextractf128 xmm6, ymm2, 1
+    vminps  xmm2, xmm2, xmm6
+    vshufps xmm6, xmm2, xmm2, 0x4E
+    vminps  xmm2, xmm2, xmm6
+    vshufps xmm6, xmm2, xmm2, 0xB1
+    vminps  xmm2, xmm2, xmm6
+
+    ; --- Reduccion horizontal de maximo (ymm3 -> xmm3) ---
+    vextractf128 xmm6, ymm3, 1
+    vmaxps  xmm3, xmm3, xmm6
+    vshufps xmm6, xmm3, xmm3, 0x4E
+    vmaxps  xmm3, xmm3, xmm6
+    vshufps xmm6, xmm3, xmm3, 0xB1
+    vmaxps  xmm3, xmm3, xmm6
+
+.pass1_tail_loop:
+    ; --- Remanente escalar (n % 8 elementos sobrantes) ---
+    cmp     eax, r12d
+    jge     .pass1_done
+    vmovss  xmm1, [rbx + rax*4]
+    vaddss  xmm0, xmm0, xmm1
+    vminss  xmm2, xmm2, xmm1
+    vmaxss  xmm3, xmm3, xmm1
+    inc     eax
+    jmp     .pass1_tail_loop
+
+.pass1_done:
+    vcvtsi2ss xmm7, xmm7, r12d     ; xmm7 = (float)n
+    vdivss  xmm0, xmm0, xmm7       ; xmm0 = mean = suma / n
+    vmovss  [r13], xmm0            ; Guardar *mean = mean
+
+    ; 6. Pasada 2 Vectorial: Varianza sum((x - mean)^2)
+    vbroadcastss ymm5, xmm0        ; ymm5 = [mean, mean, ..., mean]
+    vxorps  ymm4, ymm4, ymm4       ; ymm4 = acumulador varianza = [0, ..., 0]
+    xor     eax, eax
+
+    test    ecx, ecx
+    jle     .pass2_vec_reduce
+
+.pass2_vec_loop:
+    cmp     eax, ecx
+    jge     .pass2_vec_reduce
+    vmovaps ymm1, [rbx + rax*4]    ; Carga 8 floats
+    vsubps  ymm1, ymm1, ymm5       ; ymm1 = (arr[i..i+7] - mean)
+    vmulps  ymm1, ymm1, ymm1       ; ymm1 = (arr[i..i+7] - mean)^2
+    vaddps  ymm4, ymm4, ymm1       ; Acumula varianza
+    add     eax, 8
+    jmp     .pass2_vec_loop
+
+.pass2_vec_reduce:
+    ; --- Reduccion horizontal de varianza (ymm4 -> xmm4) ---
+    vextractf128 xmm6, ymm4, 1
+    vaddps  xmm4, xmm4, xmm6
+    vhaddps xmm4, xmm4, xmm4
+    vhaddps xmm4, xmm4, xmm4
+
+.pass2_tail_loop:
+    ; --- Remanente escalar de varianza ---
+    cmp     eax, r12d
+    jge     .pass2_done
+    vmovss  xmm1, [rbx + rax*4]
+    vsubss  xmm1, xmm1, xmm0
+    vmulss  xmm1, xmm1, xmm1
+    vaddss  xmm4, xmm4, xmm1
+    inc     eax
+    jmp     .pass2_tail_loop
+
+.pass2_done:
+    vdivss  xmm4, xmm4, xmm7       ; xmm4 = var = sum_sq / n
+    vmovss  [r14], xmm4            ; Guardar *var = var
+    vmovss  [r15], xmm2            ; Guardar *min = min
+    pop     r9                     ; Recuperar puntero max*
+    vmovss  [r9], xmm3             ; Guardar *max = max
+    jmp     .stats_vec_end
+
+.stats_vec_zero:
+    pop     r9                     ; Limpiar pila si n <= 0
     vxorps  xmm0, xmm0, xmm0
-    vmovss  [rdx], xmm0
-    vmovss  [rcx], xmm0
-    vmovss  [r8], xmm0
-    vmovss  [r9], xmm0
-    ; --- fin placeholder ---
+    vmovss  [rdx], xmm0            ; *mean = 0.0
+    vmovss  [rcx], xmm0            ; *var  = 0.0
+    vmovss  [r8], xmm0             ; *min  = 0.0
+    vmovss  [r9], xmm0             ; *max  = 0.0
 
+.stats_vec_end:
+    ; 7. Restaurar registros y limpiar estado AVX
     pop     r15
     pop     r14
     pop     r13
     pop     r12
     pop     rbx
-    vzeroupper
+    vzeroupper                     ; Limpia mitad superior de registros YMM
     ret
 
 ; ---------------------------------------------------------------
@@ -119,18 +222,67 @@ compute_stats:
 ;
 ;   out[i] = (in[i] - mean) / stddev
 ;   Caso borde: si stddev == 0.0, copie in[i] en out[i] tal cual.
-;
-; TODO (estudiante):
-;   - "Broadcast" mean y stddev a registros YMM con vbroadcastss
-;     (guarde antes xmm0/xmm1 en otros registros o en la pila, ya
-;     que planea usar xmm0/xmm1 tambien como temporales del bucle).
-;   - Bucle vectorial de 8 en 8: vmovups/vmovaps carga, vsubps,
-;     vdivps (o vmulps por el reciproco de stddev si quieren
-;     optimizar), vmovups/vmovaps guarda.
-;   - Bucle escalar de cierre para el remanente (n % 8), igual que
-;     en sum_array.
-;   - 'vzeroupper' antes del 'ret'.
 ; ---------------------------------------------------------------
 normalize_array:
-    ; TODO: implementar
+    test    edx, edx
+    jle     .norm_vec_done         ; Si n <= 0, salir inmediatamente
+
+    vxorps  xmm2, xmm2, xmm2
+    vucomiss xmm1, xmm2
+    je      .norm_vec_copy         ; Caso borde: si stddev == 0.0, solo copiar
+
+    ; Broadcast de mean y stddev a registros YMM de 256 bits
+    vbroadcastss ymm0, xmm0        ; ymm0 = [mean, mean, ..., mean]
+    vbroadcastss ymm1, xmm1        ; ymm1 = [stddev, stddev, ..., stddev]
+
+    mov     ecx, edx
+    and     ecx, ~7                ; Limite vectorial multiplo de 8
+    xor     eax, eax
+
+.norm_vec_loop:
+    cmp     eax, ecx
+    jge     .norm_vec_tail
+    vmovaps ymm2, [rdi + rax*4]    ; Carga 8 floats alineados a 32 bytes
+    vsubps  ymm2, ymm2, ymm0       ; in[i..i+7] - mean
+    vdivps  ymm2, ymm2, ymm1       ; (in[i..i+7] - mean) / stddev
+    vmovaps [rsi + rax*4], ymm2    ; Guarda 8 floats alineados
+    add     eax, 8
+    jmp     .norm_vec_loop
+
+.norm_vec_tail:
+    ; Remanente escalar para los ultimos n % 8 elementos
+    cmp     eax, edx
+    jge     .norm_vec_finish
+    vmovss  xmm2, [rdi + rax*4]
+    vsubss  xmm2, xmm2, xmm0
+    vdivss  xmm2, xmm2, xmm1
+    vmovss  [rsi + rax*4], xmm2
+    inc     eax
+    jmp     .norm_vec_tail
+
+.norm_vec_copy:
+    ; Copia en caso de desviacion estandar == 0.0
+    mov     ecx, edx
+    and     ecx, ~7
+    xor     eax, eax
+
+.copy_vec_loop:
+    cmp     eax, ecx
+    jge     .copy_vec_tail
+    vmovaps ymm2, [rdi + rax*4]
+    vmovaps [rsi + rax*4], ymm2
+    add     eax, 8
+    jmp     .copy_vec_loop
+
+.copy_vec_tail:
+    cmp     eax, edx
+    jge     .norm_vec_finish
+    vmovss  xmm2, [rdi + rax*4]
+    vmovss  [rsi + rax*4], xmm2
+    inc     eax
+    jmp     .copy_vec_tail
+
+.norm_vec_finish:
+    vzeroupper                     ; Limpia estado YMM
+.norm_vec_done:
     ret
