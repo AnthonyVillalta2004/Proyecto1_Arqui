@@ -30,17 +30,27 @@ La taxonomía de Flynn clasifica las arquitecturas computacionales según el flu
 
 ---
 
-## 2. Descripción del Entorno de Pruebas (OA2 - Compañero)
+## 2. Contexto Histórico y Entorno de Pruebas (OA2)
 
-* **Modelo de Procesador (CPU):** `[Completar: salida de lscpu / cat /proc/cpuinfo]`
-* **Flags de soporte vectorial:** Confirmación de flags `avx`, `avx2`, `fma`, `sse4_2`.
+### 2.1 Evolución Arquitectónica del SIMD en x86
+El desarrollo de las instrucciones SIMD en la arquitectura x86 responde a la necesidad de aumentar el IPC (Instrucciones Por Ciclo) en cargas de trabajo intensivas (multimedia, criptografía, cómputo científico) mediante el incremento progresivo del ancho de los registros y la adición de formatos de operandos no destructivos.
+
+* **1997 - MMX (MultiMedia eXtensions):** La primera incursión de Intel en SIMD. Introdujo registros de 64 bits (`MM0` a `MM7`). Su principal defecto arquitectónico fue el *aliasing* (reutilización) de los registros de la unidad de punto flotante (FPU x87). Esto impedía ejecutar código SIMD y operaciones flotantes escalares simultáneamente sin incurrir en una severa penalización por cambio de contexto (`EMMS`). Operaba exclusivamente sobre números enteros empaquetados.
+* **1999 - Familia SSE (Streaming SIMD Extensions):** Resolvió la deficiencia de MMX introduciendo 8 nuevos registros dedicados de 128 bits (`XMM0` a `XMM7`, expandidos a 16 en la arquitectura x86-64). SSE permitió por primera vez procesar 4 números de punto flotante de precisión simple (32 bits) en paralelo. Sus iteraciones posteriores (SSE2, SSE3, SSSE3, SSE4.x) dominaron los años 2000 añadiendo soporte para doble precisión (64 bits) y operaciones vectoriales con enteros.
+* **2011 - AVX (Advanced Vector Extensions):** Representó un salto arquitectónico masivo. Duplicó el ancho del bus interno a 256 bits, introduciendo los registros `YMM`. AVX añadió el prefijo `VEX`, el cual introdujo la sintaxis de 3 operandos (ej. `vaddps dest, src1, src2`). A diferencia de SSE, que sobrescribía el primer operando (operación destructiva), AVX preserva los operandos originales, reduciendo drásticamente las instrucciones `mov` necesarias para gestionar registros.
+* **2013 - AVX2:** Introducido con la microarquitectura *Haswell*. Mientras AVX se enfocaba en punto flotante, AVX2 extendió el soporte de 256 bits a tipos enteros. Además, introdujo operaciones *Gather* (carga de memoria no contigua basada en índices) y, junto con FMA3 (*Fused Multiply-Add*), permitió realizar una multiplicación y una suma ($A \times B + C$) en un solo ciclo de reloj, duplicando el pico teórico de FLOPS del procesador.
+* **2017 - AVX-512:** La generación actual para servidores y computación de alto rendimiento. Duplica nuevamente el tamaño a 512 bits (`ZMM0` a `ZMM31`). Introduce el prefijo `EVEX` y añade 8 registros de máscara (`k0` a `k7`), los cuales permiten *predicación por carril*: ejecutar saltos lógicos y condicionales (if/else) dentro del vector en hardware puro sin penalización del predictor de saltos del procesador (*branch predictor*).
+
+### 2.2 Entorno de Hardware y Software Utilizado
+Para el desarrollo y validación de los kernels estadísticos de este proyecto, se utilizó la siguiente infraestructura:
+* **Modelo de Procesador (CPU):** `[Completar: ej. Intel(R) Core(TM) i7-10750H CPU @ 2.60GHz]`
+* **Topología y Caché:** `[Completar: ej. 6 núcleos físicos, Caché L1d 32KB, Caché L2 256KB, Caché L3 12MB]`
+* **Flags de Soporte Vectorial (CPUID):** Validado mediante `lscpu`. Se confirma presencia de `avx`, `avx2`, `fma` y retrocompatibilidad con `sse4_2`.
 * **Herramientas de Software:**
-  * Compilador C: `gcc (Ubuntu 11.4.0) 11.4.0` (o versión instalada).
-  * Ensamblador: `nasm version 2.15.05` (o superior).
-  * Depurador: `gdb (Ubuntu 12.1-0ubuntu1~22.04) 12.1`.
-  * Herramienta de perfilado: `perf (linux-tools)`.
-
----
+  * Compilador de Control (Driver C): `gcc (Ubuntu 11.4.0) 11.4.0` configurado bajo estándar `gnu11`.
+  * Ensamblador (x86-64): `nasm version 2.15.05`, utilizando el formato `elf64`.
+  * Inspección de Registros (OA5): `gdb (Ubuntu 12.1)` leyendo símbolos DWARF.
+  * Monitoreo de Hardware (OA6): `perf stat (linux-tools)` para lectura de registros MSR de la CPU.
 
 ## 3. Explicación de la Implementación Escalar (OA3)
 
@@ -192,3 +202,10 @@ $10 = 0x55555555a4c0
 1. **Aceleración Vectorial:** La vectorización manual en ensamblador x86-64 con AVX2 reduce sustancialmente el número total de instrucciones ejecutadas, logrando aceleraciones significativas frente a la implementación escalar.
 2. **Impacto de la Jerarquía de Memoria:** El factor determinante en el rendimiento final no es únicamente la potencia aritmética de la ALU vectorial, sino la localidad de referencia y el ancho de banda hacia la memoria principal.
 3. **Robustez en Casos Borde:** La correcta combinación de alineación a 32 bytes y bucles de cierre escalares (*tail loops*) asegura que las optimizaciones SIMD mantengan un 100% de confiabilidad numérica sin sacrificar estabilidad.
+
+## Referencias y Bibliografía
+
+1. Intel Corporation. (2024). *Intel® 64 and IA-32 Architectures Software Developer’s Manual, Volume 1: Basic Architecture*. Capítulo 9 (Programming with Intel MMX Technology) y Capítulo 14 (Programming with AVX, FMA and AVX2).
+2. Intel Corporation. (2024). *Intel® Architecture Instruction Set Extensions and Future Features Programming Reference*. Documento 319433.
+3. Fog, A. (2023). *Optimizing subroutines in assembly language: An optimization guide for x86 platforms*. Copenhagen University College of Engineering. 
+4. Hennessy, J. L., & Patterson, D. A. (2017). *Computer Architecture: A Quantitative Approach* (6th ed.). Morgan Kaufmann. (Referencia teórica sobre Ley de Amdahl, Taxonomía de Flynn, SIMD y el *Memory Wall*).
