@@ -26,7 +26,7 @@ El cálculo secuencial de estas operaciones sobre millones de datos genera una a
 ### 1.2 Fundamentos Teóricos: Modelo SIMD frente a SISD
 La taxonomía de Flynn clasifica las arquitecturas computacionales según el flujo de instrucciones y datos [1]:
 * **SISD (Single Instruction, Single Data):** Modelo escalar tradicional donde cada instrucción de la CPU procesa un único dato por ciclo de reloj (por ejemplo, la instrucción `addss` suma un solo par de flotantes de 32 bits).
-* **SIMD (Single Instruction, Multiple Data):** Modelo vectorial donde una única instrucción de la CPU se aplica simultáneamente sobre múltiples datos empaquetados en registros anchos de longitud fija. Mediante las extensiones **AVX2 (Advanced Vector Extensions 2)** con registros `YMM` de 256 bits, es posible operar sobre **8 números en punto flotante de precisión simple (32 bits)** en un solo ciclo de reloj [4], ofreciendo un potencial teórico de aceleración (*speedup*) de hasta $8\times$ según la formulación teórica de rendimiento y aceleración [1].
+* **SIMD (Single Instruction, Multiple Data):** Modelo vectorial donde una única instrucción de la CPU se aplica simultáneamente sobre múltiples datos empaquetados en registros anchos de longitud fija. Mediante las extensiones AVX2 (Advanced Vector Extensions 2) con registros `YMM` de 256 bits, es posible operar sobre 8 números en punto flotante de precisión simple (32 bits) en un solo ciclo de reloj [4], ofreciendo un potencial teórico de aceleración (*speedup*) de hasta $8\times$ según la formulación teórica de rendimiento y aceleración [1].
 
 ### 1.3 Arquitectura General del Sistema y Convención ABI
 El sistema está estructurado modularmente en dos capas: un controlador en C (`src/driver.c`) que gestiona la entrada/salida y las reservas de memoria alineada, y los núcleos de cómputo en ensamblador x86-64 (`asm/scalar/stats_scalar.asm` y `asm/vector/stats_vector.asm`). La comunicación y paso de argumentos se rige estrictamente bajo la especificación **System V AMD64 ABI** [7].
@@ -148,16 +148,16 @@ Antes de ejecutar ret, se invoca vzeroupper para poner a cero la mitad superior 
 
 Tabla comparativa de resultados obtenidos contra el script de referencia `tools/verify_reference.py` (Tolerancia $\le 1\times 10^{-4}$):
 
-| Caso de Prueba           |  N    | Entrada / Modo              |          Salida Esperada (Ref.)           |   Salida Escalar    |  Salida Vectorial   | Estado |
-| :----------------------- | :---: | :-------------------------- | :---------------------------------------: | :-----------------: | :-----------------: | :----: |
-| **Borde: Vacío**         |   0   | input_empty.dat             |    media=0, var=0, min=0, max=0           | media=0, var=0      | media=0, var=0      |  PASA  |
-| **Borde: Un elemento**   |   1   | input_1.dat                 | media=x0, var=0, min=x0, max=x0           |      Coincide       |      Coincide       |  PASA  |
-| **Borde: Cola pura**     |   7   | input_7.dat                 |             Referencia Python             |      Coincide       |      Coincide       |  PASA  |
-| **Borde: Vector exacto** |   8   | input_8.dat                 |             Referencia Python             |      Coincide       |      Coincide       |  PASA  |
-| **Borde: Vector + Cola** |  15   | input_15.dat                |             Referencia Python             |      Coincide       |      Coincide       |  PASA  |
-| **Borde: Múltiple**      |  16   | input_16.dat                |             Referencia Python             |      Coincide       |      Coincide       |  PASA  |
-| **Borde: Constante**     | 1000  | constant (σ = 0)            |      media=5.0, σ=0.0, y[i]=5.0           |      Coincide       |      Coincide       |  PASA  |
-| **Borde: Extremos**      | 1000  | edge (-10⁶ ... 10⁶)         |             Referencia Python             |      Coincide       |      Coincide       |  PASA  |
+| Caso de Prueba           |   N   | Entrada / Modo      |     Salida Esperada (Ref.)      | Salida Escalar | Salida Vectorial | Estado |
+| :----------------------- | :---: | :------------------ | :-----------------------------: | :------------: | :--------------: | :----: |
+| **Borde: Vacío**         |   0   | input_empty.dat     |  media=0, var=0, min=0, max=0   | media=0, var=0 |  media=0, var=0  |  PASA  |
+| **Borde: Un elemento**   |   1   | input_1.dat         | media=x0, var=0, min=x0, max=x0 |    Coincide    |     Coincide     |  PASA  |
+| **Borde: Cola pura**     |   7   | input_7.dat         |        Referencia Python        |    Coincide    |     Coincide     |  PASA  |
+| **Borde: Vector exacto** |   8   | input_8.dat         |        Referencia Python        |    Coincide    |     Coincide     |  PASA  |
+| **Borde: Vector + Cola** |  15   | input_15.dat        |        Referencia Python        |    Coincide    |     Coincide     |  PASA  |
+| **Borde: Múltiple**      |  16   | input_16.dat        |        Referencia Python        |    Coincide    |     Coincide     |  PASA  |
+| **Borde: Constante**     | 1000  | constant (σ = 0)    |   media=5.0, σ=0.0, y[i]=5.0    |    Coincide    |     Coincide     |  PASA  |
+| **Borde: Extremos**      | 1000  | edge (-10⁶ ... 10⁶) |        Referencia Python        |    Coincide    |     Coincide     |  PASA  |
 
 ---
 
@@ -165,25 +165,25 @@ Tabla comparativa de resultados obtenidos contra el script de referencia `tools/
 
 ### 6.1 Tabla de Tiempos y Speedup Promedio (30 repeticiones por tamaño)
 
-|       Tamaño N          | Tiempo Escalar (ms) | Tiempo Vectorial (ms) | Speedup Real (T_esc / T_vec) | Speedup Teórico |
-| :---------------------: | :-----------------: | :-------------------: | :--------------------------: | :-------------: |
-|       10³ (1 K)         |      0.0031         |       0.0003          |           ~9.72x             |      8.0x       |
-|      10⁵ (100 K)        |      0.2525         |       0.0319          |           ~7.91x             |      8.0x       |
-|       10⁶ (1 M)         |      2.4374         |       0.3364          |           ~7.25x             |      8.0x       |
-|      10⁷ (10 M)         |      26.05          |        6.95           |            3.74x             |      8.0x       |
+|  Tamaño N   | Tiempo Escalar (ms) | Tiempo Vectorial (ms) | Speedup Real (T_esc / T_vec) | Speedup Teórico |
+| :---------: | :-----------------: | :-------------------: | :--------------------------: | :-------------: |
+|  10³ (1 K)  |       0.0031        |        0.0003         |            ~9.72x            |      8.0x       |
+| 10⁵ (100 K) |       0.2525        |        0.0319         |            ~7.91x            |      8.0x       |
+|  10⁶ (1 M)  |       2.4374        |        0.3364         |            ~7.25x            |      8.0x       |
+| 10⁷ (10 M)  |        26.05        |         6.95          |            3.74x             |      8.0x       |
  
 ### 6.2 Gráfico de Speedup vs $N$ (Escala Logarítmica en X)
-![Gráfico de caída de Speedup por jerarquía de memoria](../data/speedup_plot.png)
+![Gráfico de caída de Speedup por jerarquía de memoria](data/speedup_plot.png)
 *Figura 5: Evolución del Speedup en función del tamaño del arreglo. Se observa el decaimiento de la aceleración desde valores superlineales (Caché L1) hasta el estrangulamiento del bus de memoria principal (Memory Wall).*
 
 ### 6.3 Análisis con `perf stat` y Cuellos de Botella
 **Instrucciones Ejecutadas ($N=10^7$):** Escalar: $\approx 30.2$ mil millones | Vectorial: $\approx 3.79$ mil millones.
 **Instrucciones por Ciclo (IPC):** Escalar: $2.4$ | Vectorial: $1.1$.
 **Impacto de la Jerarquía de Caché:** Los resultados muestran una degradación de rendimiento directamente proporcional al tamaño del conjunto de datos. 
- 1. Para $N=10^3$ ($4\text{ KB}$), obtenemos un *speedup* superlineal ($>8.0\times$) atribuido a que el arreglo reside íntegramente en la rapidísima caché L1, aunado a la masiva reducción de penalizaciones por saltos condicionales (*branch overhead*).
- 2. Para $N=10^5$ ($400\text{ KB}$), el arreglo encaja en la caché L2, permitiendo que el procesador roce su límite computacional (Compute-Bound), arrojando el $7.91\times$ de *speedup* que dicta la teoría matemática.
+ 1. Para $N=10^3$ ($4\text{ KB}$), obtenemos un *speedup* superlineal ($>8.0\times$) debido a que el arreglo reside en caché L1, junto a la masiva reducción de penalizaciones por saltos condicionales (*branch overhead*).
+ 2. Para $N=10^5$ ($400\text{ KB}$), el arreglo encaja en la caché L2, permitiendo que el procesador roce su límite computacional (Compute-Bound), arrojando el $7.91\times$ de *speedup* que dicta la teoría.
  3. Para $N=10^6$ ($4\text{ MB}$), se requiere el uso de la caché L3 (compartida y de mayor latencia), disminuyendo la ganancia a $7.25\times$.
-**Discusión y Paradoja del IPC (El *Memory Wall*):** Al pasar a $N=10^7$ (procesando 40 MB de datos, desalojando la caché L3), el speedup real se desploma a $3.74\times$. Esto se explica con la métrica del IPC. La versión vectorial muestra un IPC contraintuitivamente bajo ($1.1$) debido a los *stalls* (congelamientos) del pipeline. Cada instrucción `vmovaps` exige 32 bytes de golpe, ocupando el ancho de banda de la memoria RAM DDR. El procesador pasa ciclos detenido esperando datos, convirtiendo la operación en una tarea estrictamente limitada por memoria (Memory-Bound) y evidenciando el fenómeno del *Memory Wall* debido al límite de ancho de banda y latencia entre la jerarquía de cachés y la memoria principal [3, Caps. 8 y 9].
+Al pasar a $N=10^7$ (procesando 40 MB de datos, desalojando la caché L3), el speedup real se desploma a $3.74\times$. Esto se explica con la métrica del IPC. La versión vectorial muestra un IPC bajo ($1.1$) debido a los *stalls* (congelamientos) del pipeline. Cada instrucción `vmovaps` exige 32 bytes de golpe, ocupando el ancho de banda de la memoria RAM DDR. El procesador pasa ciclos detenido esperando datos, convirtiendo la operación en una tarea estrictamente limitada por memoria (Memory-Bound), mostrando el fenómeno del *Memory Wall* debido al límite de ancho de banda y latencia entre la jerarquía de cachés y la memoria principal [3, Caps. 8 y 9].
 ---
 
 ## 7. Evidencia de la Sesión en GDB (OA5)
